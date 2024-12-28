@@ -3,6 +3,7 @@ package restic
 import (
 	"bytes"
 	"encoding/json"
+	"log/slog"
 	"os/exec"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -91,7 +92,11 @@ func (r Repo) Stats() (ResticStatsJSON, error) {
 	outBuf := bytes.Buffer{}
 	cmd.Stdout = &outBuf
 
+	errBuf := bytes.Buffer{}
+	cmd.Stderr = &errBuf
+
 	if err := cmd.Run(); err != nil {
+		slog.Error(errBuf.String()) // BFTODO
 		return ResticStatsJSON{}, err
 	}
 

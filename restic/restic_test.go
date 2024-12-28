@@ -46,6 +46,7 @@ restic_check_success 1.1
 
 type TestTempDir struct {
 	Path string
+	Repo *Repo
 }
 
 func NewTestTempDir() (TestTempDir, error) {
@@ -67,22 +68,15 @@ func (t *TestTempDir) Close() error {
 	return os.RemoveAll(t.Path)
 }
 
-func NewTempRepo() (Repo, error) {
-	tmpDir, err := NewTestTempDir()
-	if err != nil {
-		return Repo{}, err
-	}
-	defer tmpDir.Close()
-	slog.Info("temporary dir", slog.String("path", tmpDir.Path))
-
+func NewTempRepo(tmpDir TestTempDir) (*Repo, error) {
 	contentDir := path.Join(tmpDir.Path, "content")
 	repoDir := path.Join(tmpDir.Path, "repo")
 
 	if err := os.Mkdir(contentDir, 0755); err != nil {
-		return Repo{}, err
+		return nil, err
 	}
 	if err := os.Mkdir(repoDir, 0755); err != nil {
-		return Repo{}, err
+		return nil, err
 	}
 
 	for n, bs := range [][]byte{
@@ -91,33 +85,53 @@ func NewTempRepo() (Repo, error) {
 		[]byte("DFGDFGDGDFGFD"), // BFTODO: random
 	} {
 		fname := fmt.Sprintf("file_%d", n)
-		if err = os.WriteFile(path.Join(contentDir, fname), bs, 0644); err != nil {
-			return Repo{}, err
+		if err := os.WriteFile(path.Join(contentDir, fname), bs, 0644); err != nil {
+			return nil, err
 		}
 	}
 
 	repo := NewRepo(Config{Dir: repoDir})
 
 	if err := repo.Init(); err != nil {
-		return Repo{}, err
+		return nil, err
 	}
 
 	if err := repo.BackUp(contentDir); err != nil {
-		return Repo{}, err
+		return nil, err
+	}
+
+	return repo, nil
+}
+
+func TestRepo(t *testing.T) {
+	tmpDir, err := NewTestTempDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tmpDir.Close()
+	slog.Info("temporary dir", slog.String("path", tmpDir.Path))
+
+	repo, err := NewTempRepo(tmpDir)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	stats, err := repo.Stats()
 	if err != nil {
-		return Repo{}, err
-	}
-	slog.Info("stats", slog.Any("struct", stats))
-
-	return Repo{}, nil
-}
-
-func TestRepo(t *testing.T) {
-	_, err := NewTempRepo()
-	if err != nil {
 		t.Fatal(err)
+	}
+
+	const ExpTotalSize = 27
+	const ExpTotalFileCount = 10
+	const ExpSnapshotsCount = 1
+
+	if ExpTotalSize != stats.TotalSize {
+		t.Errorf("unexpected total size, got %d, expected %d", stats.TotalSize, ExpTotalSize)
+	}
+	if ExpTotalFileCount != stats.TotalFileCount {
+		t.Errorf("unexpected total file count, got %d, expected %d", stats.TotalFileCount, ExpTotalFileCount)
+	}
+	if ExpSnapshotsCount != stats.SnapshotsCount {
+		t.Errorf("unexpected snapshots count, got %d, expected %d", stats.SnapshotsCount, ExpSnapshotsCount)
 	}
 }
