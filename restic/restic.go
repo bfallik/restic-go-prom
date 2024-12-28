@@ -1,10 +1,16 @@
 package restic
 
 import (
+	"bytes"
+	"encoding/json"
+	"os/exec"
+
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-type Config struct{}
+type Config struct {
+	Dir string
+}
 
 type Metrics struct {
 	CheckSuccess prometheus.Gauge
@@ -50,7 +56,52 @@ func NewMetrics(reg *prometheus.Registry) *Metrics {
 	return &m
 }
 
-type Repo struct{}
+type Repo struct {
+	Config Config
+}
+
+func NewRepo(cfg Config) *Repo {
+	return &Repo{
+		Config: cfg,
+	}
+}
+
+func (r Repo) Init() error {
+	cmd := exec.Command("restic", "init", "--repo", r.Config.Dir, "--insecure-no-password")
+	if cmd.Err != nil {
+		return cmd.Err
+	}
+	return cmd.Run()
+}
+
+func (r Repo) BackUp(contentDir string) error {
+	cmd := exec.Command("restic", "backup", "--repo", r.Config.Dir, "--insecure-no-password", contentDir)
+	if cmd.Err != nil {
+		return cmd.Err
+	}
+	return cmd.Run()
+}
+
+func (r Repo) Stats() (ResticStatsJSON, error) {
+	cmd := exec.Command("restic", "stats", "--repo", r.Config.Dir, "--insecure-no-password", "--json")
+	if cmd.Err != nil {
+		return ResticStatsJSON{}, cmd.Err
+	}
+
+	outBuf := bytes.Buffer{}
+	cmd.Stdout = &outBuf
+
+	if err := cmd.Run(); err != nil {
+		return ResticStatsJSON{}, err
+	}
+
+	stats := ResticStatsJSON{}
+	if err := json.Unmarshal(outBuf.Bytes(), &stats); err != nil {
+		return ResticStatsJSON{}, err
+	}
+
+	return stats, nil
+}
 
 func (r *Repo) Ping() error {
 	return nil
@@ -60,6 +111,8 @@ func (r *Repo) Metrics() Metrics {
 	return Metrics{}
 }
 
-func NewRepo(cfg Config) *Repo {
-	return &Repo{}
+type ResticStatsJSON struct {
+	TotalSize      int `json:"total_size"`
+	TotalFileCount int `json:"total_file_count"`
+	SnapshotsCount int `json:"snapshots_count"`
 }
