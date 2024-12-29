@@ -2,6 +2,7 @@ package restic
 
 import (
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"os"
@@ -69,6 +70,12 @@ func (t *TestTempDir) Close() error {
 	return os.RemoveAll(t.Path)
 }
 
+func randBytes(len int) []byte {
+	bs := make([]byte, len)
+	rand.Read(bs)
+	return bs
+}
+
 func NewTempRepo(tmpDir TestTempDir) (*Repo, error) {
 	contentDir := path.Join(tmpDir.Path, "content")
 	repoDir := path.Join(tmpDir.Path, "repo")
@@ -81,9 +88,9 @@ func NewTempRepo(tmpDir TestTempDir) (*Repo, error) {
 	}
 
 	for n, bs := range [][]byte{
-		[]byte("This is a test"),
-		{},                      // empty
-		[]byte("DFGDFGDGDFGFD"), // BFTODO: random
+		[]byte("This is a test"), // fixed string
+		{},                       // empty
+		randBytes(40),            // random
 	} {
 		fname := fmt.Sprintf("file_%d", n)
 		if err := os.WriteFile(path.Join(contentDir, fname), bs, 0644); err != nil {
@@ -123,7 +130,7 @@ func TestRepo(t *testing.T) {
 	}
 
 	expected := ResticStatsJSON{
-		TotalSize:      27,
+		TotalSize:      54,
 		TotalFileCount: 10,
 		SnapshotsCount: 1,
 	}
