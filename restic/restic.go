@@ -3,7 +3,7 @@ package restic
 import (
 	"bytes"
 	"encoding/json"
-	"log/slog"
+	"fmt"
 	"os/exec"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -83,10 +83,12 @@ func (r Repo) BackUp(contentDir string) error {
 	return cmd.Run()
 }
 
-func (r Repo) Stats() (ResticStatsJSON, error) {
-	cmd := exec.Command("restic", "stats", "--repo", r.Config.Dir, "--insecure-no-password", "--json")
+func SubcommandJSON[T any](repo Repo, subCmd string, arg ...string) (T, error) {
+	var zero T
+
+	cmd := exec.Command("restic", append([]string{subCmd, "--repo", repo.Config.Dir, "--json"}, arg...)...)
 	if cmd.Err != nil {
-		return ResticStatsJSON{}, cmd.Err
+		return zero, cmd.Err
 	}
 
 	outBuf := bytes.Buffer{}
@@ -96,16 +98,19 @@ func (r Repo) Stats() (ResticStatsJSON, error) {
 	cmd.Stderr = &errBuf
 
 	if err := cmd.Run(); err != nil {
-		slog.Error(errBuf.String()) // BFTODO
-		return ResticStatsJSON{}, err
+		return zero, fmt.Errorf("%w: %s", err, errBuf.String())
 	}
 
-	stats := ResticStatsJSON{}
-	if err := json.Unmarshal(outBuf.Bytes(), &stats); err != nil {
-		return ResticStatsJSON{}, err
+	var dest T
+	if err := json.Unmarshal(outBuf.Bytes(), &dest); err != nil {
+		return zero, err
 	}
 
-	return stats, nil
+	return dest, nil
+}
+
+func (r Repo) Stats() (ResticStatsJSON, error) {
+	return SubcommandJSON[ResticStatsJSON](r, "stats", "--insecure-no-password")
 }
 
 func (r *Repo) Ping() error {
