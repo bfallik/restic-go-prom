@@ -8,6 +8,7 @@ import (
 	"path"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/expfmt"
 )
@@ -121,17 +122,13 @@ func TestRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const ExpTotalSize = 27
-	const ExpTotalFileCount = 10
-	const ExpSnapshotsCount = 1
+	expected := ResticStatsJSON{
+		TotalSize:      27,
+		TotalFileCount: 10,
+		SnapshotsCount: 1,
+	}
 
-	if ExpTotalSize != stats.TotalSize {
-		t.Errorf("unexpected total size, got %d, expected %d", stats.TotalSize, ExpTotalSize)
-	}
-	if ExpTotalFileCount != stats.TotalFileCount {
-		t.Errorf("unexpected total file count, got %d, expected %d", stats.TotalFileCount, ExpTotalFileCount)
-	}
-	if ExpSnapshotsCount != stats.SnapshotsCount {
-		t.Errorf("unexpected snapshots count, got %d, expected %d", stats.SnapshotsCount, ExpSnapshotsCount)
+	if diff := cmp.Diff(expected, stats); diff != "" {
+		t.Errorf("Stats() mismatch (-expected, +actual):\n%s", diff)
 	}
 }
