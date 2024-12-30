@@ -17,7 +17,8 @@ import (
 func TestMetrics(t *testing.T) {
 	reg := prometheus.NewRegistry()
 
-	m := NewMetrics(reg)
+	m := NewMetrics()
+	reg.Register(m.CheckSuccess)
 	m.CheckSuccess.Set(1.1)
 
 	gatherers := prometheus.Gatherers{
