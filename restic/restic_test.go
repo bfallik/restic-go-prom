@@ -77,39 +77,65 @@ func randBytes(len int) []byte {
 	return bs
 }
 
-func NewTempRepo(tmpDir TestTempDir) (*Repo, error) {
+func NewTempRepo(t *testing.T, tmpDir TestTempDir) (*Repo, ResticBackupSummaryJSON, error) {
 	contentDir := path.Join(tmpDir.Path, "content")
 	repoDir := path.Join(tmpDir.Path, "repo")
 
 	if err := os.Mkdir(contentDir, 0755); err != nil {
-		return nil, err
+		return nil, ResticBackupSummaryJSON{}, err
 	}
 	if err := os.Mkdir(repoDir, 0755); err != nil {
-		return nil, err
+		return nil, ResticBackupSummaryJSON{}, err
 	}
 
-	for n, bs := range [][]byte{
+	fileData := [][]byte{
 		[]byte("This is a test"), // fixed string
 		{},                       // empty
 		randBytes(40),            // random
-	} {
+	}
+	for n, bs := range fileData {
 		fname := fmt.Sprintf("file_%d", n)
 		if err := os.WriteFile(path.Join(contentDir, fname), bs, 0644); err != nil {
-			return nil, err
+			return nil, ResticBackupSummaryJSON{}, err
 		}
 	}
 
 	repo := NewRepo(Config{Dir: repoDir})
 
 	if err := repo.Init(); err != nil {
-		return nil, err
+		return nil, ResticBackupSummaryJSON{}, err
 	}
 
-	if err := repo.BackUp(contentDir); err != nil {
-		return nil, err
+	msgs, err := repo.BackUp(contentDir)
+	if err != nil {
+		return nil, ResticBackupSummaryJSON{}, err
 	}
 
-	return repo, nil
+	summary := ResticBackupSummaryJSON{}
+	for _, msg := range msgs {
+		switch v := msg.(type) {
+		case ResticBackupStatusJSON:
+			t.Logf("status: %v", v)
+		case ResticBackupSummaryJSON:
+			summary = v
+		default:
+			panic("unexpected type")
+		}
+	}
+
+	if summary.FilesNew != len(fileData) {
+		return nil, ResticBackupSummaryJSON{}, fmt.Errorf("FilesNew mismatch; expected %v, got %v", len(fileData), summary.FilesNew)
+	}
+	tot := 0
+	for _, bs := range fileData {
+		tot += len(bs)
+	}
+
+	if summary.TotalBytesProcessed != tot {
+		return nil, ResticBackupSummaryJSON{}, fmt.Errorf("DataAdded mismatch; expected %v, got %v", tot, summary.TotalBytesProcessed)
+	}
+
+	return repo, summary, nil
 }
 
 func TestRepo(t *testing.T) {
@@ -120,7 +146,7 @@ func TestRepo(t *testing.T) {
 	defer tmpDir.Close()
 	slog.Info("temporary dir", slog.String("path", tmpDir.Path))
 
-	repo, err := NewTempRepo(tmpDir)
+	repo, summary, err := NewTempRepo(t, tmpDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +157,8 @@ func TestRepo(t *testing.T) {
 	}
 
 	expected := ResticStatsJSON{
-		TotalSize:      54,
-		TotalFileCount: 10,
+		TotalSize:      summary.TotalBytesProcessed,
+		TotalFileCount: summary.FilesNew + summary.DirsNew,
 		SnapshotsCount: 1,
 	}
 

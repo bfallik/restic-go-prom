@@ -1,7 +1,6 @@
 package restic
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -112,42 +111,71 @@ func (r Repo) Init() error {
 	return cmd.Run()
 }
 
-func (r Repo) BackUp(contentDir string) error {
-	cmd := exec.Command("restic", "backup", "--repo", r.Config.Dir, "--insecure-no-password", contentDir)
-	if cmd.Err != nil {
-		return cmd.Err
-	}
-	return cmd.Run()
+type BackupMsgTyper interface {
+	MsgType() string
 }
 
-func SubcommandJSON[T any](repo Repo, subCmd string, arg ...string) (T, error) {
-	var zero T
-
-	cmd := exec.Command("restic", append([]string{subCmd, "--repo", repo.Config.Dir, "--json"}, arg...)...)
-	if cmd.Err != nil {
-		return zero, cmd.Err
+func (r Repo) BackUp(contentDir string) ([]BackupMsgTyper, error) {
+	cmd, err := NewCmd(CmdOptRepo{r.Config.Dir}, CmdOptCommandBackup{}, CmdOptFlags{"--insecure-no-password", contentDir, "--json"})
+	if err != nil {
+		return nil, err
 	}
-
-	outBuf := bytes.Buffer{}
-	cmd.Stdout = &outBuf
-
-	errBuf := bytes.Buffer{}
-	cmd.Stderr = &errBuf
 
 	if err := cmd.Run(); err != nil {
-		return zero, fmt.Errorf("%w: %s", err, errBuf.String())
+		return nil, fmt.Errorf("%w: %s", err, cmd.ErrBuf.String())
 	}
 
-	var dest T
-	if err := json.Unmarshal(outBuf.Bytes(), &dest); err != nil {
-		return zero, err
+	lines, err := cmd.JSONLines()
+	if err != nil {
+		return nil, err
 	}
 
-	return dest, nil
+	res := []BackupMsgTyper{}
+	for _, msg := range lines {
+		var typ ResticBackupMessageType
+		if err := json.Unmarshal(msg, &typ); err != nil {
+			return nil, err
+		}
+
+		switch typ.MessageType {
+		case "status":
+			var dest ResticBackupStatusJSON
+			if err := json.Unmarshal(msg, &dest); err != nil {
+				return nil, err
+			}
+			res = append(res, dest)
+
+		case "summary":
+			var dest ResticBackupSummaryJSON
+			if err := json.Unmarshal(msg, &dest); err != nil {
+				return nil, err
+			}
+			res = append(res, dest)
+
+		default:
+			panic("unexpected type")
+		}
+	}
+
+	return res, nil
 }
 
 func (r Repo) Stats() (ResticStatsJSON, error) {
-	return SubcommandJSON[ResticStatsJSON](r, "stats", "--insecure-no-password")
+	cmd, err := NewCmd(CmdOptRepo{r.Config.Dir}, CmdOptCommandStats{}, CmdOptFlags{"--insecure-no-password", "--json"})
+	if err != nil {
+		return ResticStatsJSON{}, err
+	}
+
+	if err := cmd.Run(); err != nil {
+		return ResticStatsJSON{}, fmt.Errorf("%w: %s", err, cmd.ErrBuf.String())
+	}
+
+	var dest ResticStatsJSON
+	if err := json.Unmarshal(cmd.OutBuf.Bytes(), &dest); err != nil {
+		return ResticStatsJSON{}, err
+	}
+
+	return dest, nil
 }
 
 func (r *Repo) Ping() error {
@@ -162,4 +190,43 @@ type ResticStatsJSON struct {
 	TotalSize      int `json:"total_size"`
 	TotalFileCount int `json:"total_file_count"`
 	SnapshotsCount int `json:"snapshots_count"`
+}
+
+type ResticBackupMessageType struct {
+	MessageType string `json:"message_type"`
+}
+
+type ResticBackupStatusJSON struct {
+	MessageType string `json:"message_type"`
+	PercentDone int    `json:"percent_done"`
+	TotalFiles  int    `json:"total_files"`
+	FilesDone   int    `json:"files_done"`
+	TotalBytes  int    `json:"total_bytes"`
+	BytesDone   int    `json:"bytes_done"`
+}
+
+func (o ResticBackupStatusJSON) MsgType() string {
+	return o.MessageType
+}
+
+type ResticBackupSummaryJSON struct {
+	MessageType         string  `json:"message_type"`
+	FilesNew            int     `json:"files_new"`
+	FilesChanged        int     `json:"files_changed"`
+	FilesUnmodified     int     `json:"files_unmodified"`
+	DirsNew             int     `json:"dirs_new"`
+	DirsChanges         int     `json:"dirs_changed"`
+	DirsUnmodified      int     `json:"dirs_unmodified"`
+	DataBlobs           int     `json:"data_blobs"`
+	TreeBlobs           int     `json:"tree_blobs"`
+	DataAdded           int     `json:"data_added"`
+	DataAddedPacked     int     `json:"data_added_packed"`
+	TotalFilesProcessed int     `json:"total_files_processed"`
+	TotalBytesProcessed int     `json:"total_bytes_processed"`
+	TotalDuration       float64 `json:"total_duration"`
+	SnapshotID          string  `json:"snapshot_id"`
+}
+
+func (o ResticBackupSummaryJSON) MsgType() string {
+	return o.MessageType
 }
